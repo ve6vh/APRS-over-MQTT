@@ -64,6 +64,8 @@
 #define MAX_MQTT_ATTEMPTS       10          // max attemtpts to connect to broker
 
 // debug options (1 enables; 0 disables)
+#define VERBOSE                 0           // surpress serial messages when updating
+#define DUMP_AQI                0           // dump AQI when updating
 #define DUMP_PAYLOAD            0           // dump the payload to serial port
 #define SHORT_FUSE              0           // shorten time between posts
 #define WIFI_STATS              0           // dump the wifi stats
@@ -93,17 +95,23 @@ MQTT_AQI mqttAQI = {
     .air_qual = 0                               // air quality
 };
 
-// sensor configuration
-bsecSensor sensorList[] =
-{
-    BSEC_OUTPUT_IAQ,
-    BSEC_OUTPUT_RAW_TEMPERATURE,
-    BSEC_OUTPUT_RAW_PRESSURE,
-    BSEC_OUTPUT_RAW_HUMIDITY,
-    BSEC_OUTPUT_RAW_GAS,
-    BSEC_OUTPUT_CO2_EQUIVALENT,
-    BSEC_OUTPUT_BREATH_VOC_EQUIVALENT
-};  
+bsecSensor sensorList[] = {
+  BSEC_OUTPUT_IAQ,
+  BSEC_OUTPUT_RAW_TEMPERATURE,
+  BSEC_OUTPUT_RAW_PRESSURE,
+  BSEC_OUTPUT_RAW_HUMIDITY,
+  BSEC_OUTPUT_RAW_GAS,
+  BSEC_OUTPUT_STABILIZATION_STATUS,
+  BSEC_OUTPUT_RUN_IN_STATUS,
+  BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
+  BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
+  BSEC_OUTPUT_STATIC_IAQ,
+  BSEC_OUTPUT_CO2_EQUIVALENT,
+  BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
+  BSEC_OUTPUT_GAS_PERCENTAGE,
+  BSEC_OUTPUT_COMPENSATED_GAS
+};
+
 
 // Data strings from config file
 const char *networkID=  CONFIG_NETWORKID;
@@ -276,7 +284,9 @@ void loop(void)
   case  WAITING:
     if(!dataReady)         // wait for data to arrive
       return;
+#if VERBOSE
     Serial.println("Sensor data ready");      
+#endif
     fsm = SENDING;
     break;
   
@@ -292,14 +302,20 @@ void loop(void)
   // waiting for next update interval
   case  SLEEPING:
     currentMillis = millis()-previousMillis;
-    if(currentMillis < interval)    {
-      Minutes=(previousMillis+interval-millis())/60000L;
-      String timeMsg=String(Minutes+1);
-      timeMsg.trim();
-      timeMsg=timeMsg+" min";
-      MatrixText(timeMsg);
+    // give up the wait if there is data ready...
+    if(dataReady) {
+      fsm = WAITING;
     } else {
-      fsm = IDLE;
+      // update the interval
+      if(currentMillis < interval)    {
+        Minutes=(previousMillis+interval-millis())/60000L;
+        String timeMsg=String(Minutes+1);
+        timeMsg.trim();
+        timeMsg=timeMsg+" min";
+        MatrixText(timeMsg);
+      } else {
+        fsm = IDLE;
+      }
     }
     break;
   }
@@ -344,6 +360,12 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
         
       case BSEC_OUTPUT_IAQ:
         mqttAQI.air_qual = dsignal;
+#if DUMP_AQI
+        Serial.print("Updated AQI value:");
+        Serial.print(dsignal);
+        Serial.print("\n");
+#endif        
+        dataReady = true;             // indicate that we have data
         break;
 
       // unused sensor data
@@ -353,7 +375,6 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
         break;
     }
   }
-  dataReady = true;             // indicate that we have data
 }
 
 /*
@@ -388,8 +409,10 @@ void sendAPRSMessage(void)
   mqttClient.endMessage();
   Count+=1;
   
+#if VERBOSE  
   String pubMsg = "Message "+ String(Count) + " published.. to " + pubTopic;
   Serial.println(pubMsg);
+#endif
   
   // optional: print payload 
 #if DUMP_PAYLOAD
